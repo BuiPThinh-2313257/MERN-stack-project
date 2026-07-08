@@ -4,8 +4,19 @@ const { Address } = require("../models");
 // Lấy tất cả địa chỉ của customer đang đăng nhập
 const getMyAddresses = async (req, res, next) => {
   try {
-    // TODO: Address.find({ customer: req.user.id })
-  } catch (err) { next(err); }
+    const addresses = await Address.find({ customer: req.user.id }).sort({
+      is_default: -1,
+      createdAt: -1,
+    });
+
+    res.status(200).json({
+      success: true,
+      count: addresses.length,
+      data: addresses,
+    });
+  } catch (err) {
+    next(err);
+  }
 };
 
 // [POST] /api/addresses
@@ -14,7 +25,24 @@ const create = async (req, res, next) => {
   try {
     // TODO: nếu req.body.is_default → updateMany({ customer: req.user.id }, { is_default: false })
     // TODO: Address.create({ ...req.body, customer: req.user.id })
-  } catch (err) { next(err); }
+    if (req.body.is_default) {
+      await Address.updateMany(
+        { customer: req.user.id },
+        { is_default: false },
+      );
+    }
+    const address = await Address.create({
+      ...req.body,
+      customer: req.user.id,
+    });
+
+    res.status(201).json({
+      success: true,
+      data: address,
+    });
+  } catch (err) {
+    next(err);
+  }
 };
 
 // [PUT] /api/addresses/:id
@@ -24,7 +52,34 @@ const update = async (req, res, next) => {
     // TODO: nếu req.body.is_default → reset is_default trước
     // TODO: findOneAndUpdate({ _id: req.params.id, customer: req.user.id }, req.body, { new: true })
     // TODO: 404 nếu không tìm thấy
-  } catch (err) { next(err); }
+    if (req.body.is_default) {
+      await Address.updateMany(
+        { customer: req.user.id },
+        { is_default: false },
+      );
+    }
+    const { customer, ...updData } = req.body;
+    const address = await Address.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        customer: req.user.id,
+      },
+      updData,
+      { new: true },
+    );
+    if (!address) {
+      return res.status(404).json({
+        success: false,
+        message: "Address not found",
+      });
+    }
+    res.status(200).json({
+      success: true,
+      data: address,
+    });
+  } catch (err) {
+    next(err);
+  }
 };
 
 // [DELETE] /api/addresses/:id
@@ -33,7 +88,23 @@ const remove = async (req, res, next) => {
   try {
     // TODO: findOneAndDelete({ _id: req.params.id, customer: req.user.id })
     // TODO: 404 nếu không tìm thấy
-  } catch (err) { next(err); }
+    const address = await Address.findOneAndDelete({
+      _id: req.params.id,
+      customer: req.user.id,
+    });
+    if (!address) {
+      return res.status(404).json({
+        success: false,
+        message: "Address not found",
+      });
+    }
+    res.status(200).json({
+      success: true,
+      message: "Address deleted",
+    });
+  } catch (err) {
+    next(err);
+  }
 };
 
 module.exports = { getMyAddresses, create, update, remove };
