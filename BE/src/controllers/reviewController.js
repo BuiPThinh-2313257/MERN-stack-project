@@ -1,52 +1,169 @@
+const mongoose = require("mongoose");
 const { Review, OrderedItem, Product } = require("../models");
 
-// [GET] /api/products/:productId/reviews
-// Lấy danh sách reviews của sản phẩm
-// Query: ?rating=5&page=1&limit=10
-const getByProduct = async (req, res, next) => {
-  try {
-    // TODO: Review.find({ product: req.params.productId })
-    //       .populate("customer", "name")
-    //       .sort("-createdAt"), có pagination
-  } catch (err) { next(err); }
+const recalcAvgRating = async (productId) => {
+  const stats = await Review.aggregate([
+    { $match: { product: new mongoose.Types.ObjectId(productId) } },
+    { $group: { _id: "$product", avg: { $avg: "$rating" } } },
+  ]);
+
+  const newAvg = stats.length ? stats[0].avg : 0;
+  await Product.findByIdAndUpdate(productId, { avg_rating: newAvg });
 };
 
-// [POST] /api/products/:productId/reviews
-// Tạo review. Chỉ customer đã mua (có OrderedItem đã delivered) mới được review
-// Body: { ordered_item_id, rating, comment, img_urls }
-const create = async (req, res, next) => {
+const getByProduct = async (req, res, next) => {
   try {
-    // TODO: kiểm tra OrderedItem tồn tại, thuộc về customer, và order đã delivered
-    // TODO: Review.create({ product, customer, ordered_item, rating, comment, img_urls })
-    // TODO: cập nhật avg_rating của Product:
-    //         tính lại average bằng aggregate hoặc lấy avg từ Review.aggregate
-    //         Product.findByIdAndUpdate({ avg_rating: newAvg })
+    const filter = { product: req.params.productId };
+    const { rating, page = 1, limit = 10 } = req.query;
+    if (rating) {
+      filter.rating = Number(rating);
+    }
+    const skip = (Number(page) - 1) * Number(limit);
+
+    const [reviews, total] = await Promise.all([
+      Review.find(filter)
+        .populate("customer", "name")
+        .sort("-createdAt")
+        .skip(skip)
+        .limit(Number(limit)),
+      Review.countDocuments(filter),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: reviews,
+      total,
+      page: Number(page),
+      pages: Math.ceil(total / limit),
+    });
   } catch (err) {
-    if (err.code === 11000)
-      return res.status(400).json({ success: false, message: "You already reviewed this product" });
     next(err);
   }
 };
 
-// [PUT] /api/reviews/:id
-// Sửa review. Chỉ chủ review được sửa
-// Body: { rating?, comment?, img_urls? }
-const update = async (req, res, next) => {
+const create = async (req, res, next) => {
   try {
-    // TODO: findOne({ _id: req.params.id, customer: req.user.id })
-    // TODO: cập nhật các field, save()
-    // TODO: tính lại avg_rating của product
-  } catch (err) { next(err); }
+    const { ordered_item_id, rating, comment, img_urls } = req.body;
+    const item = await OrderedItem.findById(ordered_item_id)
+      .populate("order", "customer status ")
+      .populate("variant", "product");
+
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: "Không thể đánh giá sản phẩm chưa mua",
+      });
+    }
+
+    if (item.order.customer.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: "Không thể đánh giá sản phẩm chưa mua",
+      });
+    }
+
+    if (item.order.status !== "delivered") {
+      return res.status(400).json({
+        success: false,
+        message: "Không thể đánh giá sản phẩm chưa được giao",
+      });
+    }
+
+    if (item.variant.product.toString() !== req.params.productId) {
+      return res.status(400).json({
+        success: false,
+        message: "Không thể đánh giá sản phẩm chưa mua",
+      });
+    }
+
+    const review = await Review.create({
+      product: req.params.productId,
+      customer: req.user.id,
+      ordered_item: ordered_item_id,
+      rating,
+      img_urls: img_urls,
+      comment: comment,
+    });
+
+    await recalcAvgRating(review.product);
+
+    res.status(201).json({
+      success: true,
+      data: review,
+    });
+  } catch (err) {
+    if (err.code === 11000)
+      return res
+        .status(400)
+        .json({ success: false, message: "Bạn đã đánh giá sản phẩm này" });
+    next(err);
+  }
 };
 
-// [DELETE] /api/reviews/:id
-// Xóa review. Chủ review hoặc admin
+const update = async (req, res, next) => {
+  try {
+    const { rating, comment, img_urls } = req.body;
+    const review = await Review.findOne({
+      _id: req.params.id,
+      customer: req.user.id,
+    });
+    if (!review) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tồn tại đánh giá",
+      });
+    }
+
+    if (rating) {
+      review.rating = rating;
+    }
+    if (comment) {
+      review.comment = comment;
+    }
+    if (img_urls) {
+      review.img_urls = img_urls;
+    }
+    await review.save();
+
+    await recalcAvgRating(review.product);
+
+    res.status(200).json({
+      success: true,
+      data: review,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 const remove = async (req, res, next) => {
   try {
-    // TODO: nếu admin → findByIdAndDelete
-    // TODO: nếu customer → findOneAndDelete({ _id, customer: req.user.id })
-    // TODO: tính lại avg_rating của product
-  } catch (err) { next(err); }
+    let review;
+    if (req.user.role_type === "admin") {
+      review = await Review.findByIdAndDelete(req.params.id);
+    } else {
+      review = await Review.findOneAndDelete({
+        _id: req.params.id,
+        customer: req.user.id,
+      });
+    }
+
+    if (!review) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tồn tại đánh giá",
+      });
+    }
+
+    await recalcAvgRating(review.product);
+
+    res.status(200).json({
+      success: true,
+      message: "Đã xóa đánh giá",
+    });
+  } catch (err) {
+    next(err);
+  }
 };
 
 module.exports = { getByProduct, create, update, remove };

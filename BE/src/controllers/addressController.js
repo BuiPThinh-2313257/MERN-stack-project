@@ -1,7 +1,5 @@
 const { Address } = require("../models");
 
-// [GET] /api/addresses
-// Lấy tất cả địa chỉ của customer đang đăng nhập
 const getMyAddresses = async (req, res, next) => {
   try {
     const addresses = await Address.find({ customer: req.user.id }).sort({
@@ -19,12 +17,8 @@ const getMyAddresses = async (req, res, next) => {
   }
 };
 
-// [POST] /api/addresses
-// Tạo địa chỉ mới. Nếu is_default = true thì reset tất cả địa chỉ khác về false trước
 const create = async (req, res, next) => {
   try {
-    // TODO: nếu req.body.is_default → updateMany({ customer: req.user.id }, { is_default: false })
-    // TODO: Address.create({ ...req.body, customer: req.user.id })
     if (req.body.is_default) {
       await Address.updateMany(
         { customer: req.user.id },
@@ -45,13 +39,8 @@ const create = async (req, res, next) => {
   }
 };
 
-// [PUT] /api/addresses/:id
-// Cập nhật địa chỉ. Chỉ được sửa địa chỉ của chính mình
 const update = async (req, res, next) => {
   try {
-    // TODO: nếu req.body.is_default → reset is_default trước
-    // TODO: findOneAndUpdate({ _id: req.params.id, customer: req.user.id }, req.body, { new: true })
-    // TODO: 404 nếu không tìm thấy
     if (req.body.is_default) {
       await Address.updateMany(
         { customer: req.user.id },
@@ -70,7 +59,7 @@ const update = async (req, res, next) => {
     if (!address) {
       return res.status(404).json({
         success: false,
-        message: "Address not found",
+        message: "Không tìm thấy địa chỉ",
       });
     }
     res.status(200).json({
@@ -82,12 +71,8 @@ const update = async (req, res, next) => {
   }
 };
 
-// [DELETE] /api/addresses/:id
-// Xóa địa chỉ. Chỉ được xóa địa chỉ của chính mình
 const remove = async (req, res, next) => {
   try {
-    // TODO: findOneAndDelete({ _id: req.params.id, customer: req.user.id })
-    // TODO: 404 nếu không tìm thấy
     const address = await Address.findOneAndDelete({
       _id: req.params.id,
       customer: req.user.id,
@@ -95,12 +80,12 @@ const remove = async (req, res, next) => {
     if (!address) {
       return res.status(404).json({
         success: false,
-        message: "Address not found",
+        message: "Không tìm thấy địa chỉ",
       });
     }
     res.status(200).json({
       success: true,
-      message: "Address deleted",
+      message: "Địa chỉ đã được xóa",
     });
   } catch (err) {
     next(err);
